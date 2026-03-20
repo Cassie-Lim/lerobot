@@ -283,10 +283,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Build a mapping: absolute_index -> relative_index_in_filtered_dataset
         self._absolute_to_relative_idx = None
         if self.episodes is not None:
-            self._absolute_to_relative_idx = {
-                abs_idx.item() if isinstance(abs_idx, torch.Tensor) else abs_idx: rel_idx
-                for rel_idx, abs_idx in enumerate(self.hf_dataset["index"])
-            }
+            self._absolute_to_relative_idx = self._build_absolute_to_relative_index_map()
 
         # Setup delta_indices
         if self.delta_timestamps is not None:
@@ -422,6 +419,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
+
+    def _build_absolute_to_relative_index_map(self) -> dict[int, int]:
+        """Build abs->rel frame index map without triggering image decoding.
+
+        Accessing `self.hf_dataset["index"]` goes through HF formatting/decoding and can decode
+        image features when a transform is attached. Reading from the Arrow table avoids that cost.
+        """
+        index_column = self.hf_dataset.data.column("index")
+        absolute_to_relative_idx: dict[int, int] = {}
+        rel_idx = 0
+        for chunk in index_column.chunks:
+            for abs_idx in chunk.to_pylist():
+                absolute_to_relative_idx[int(abs_idx)] = rel_idx
+                rel_idx += 1
+        return absolute_to_relative_idx
 
     def _check_cached_episodes_sufficient(self) -> bool:
         """Check if the cached dataset contains all requested episodes and their video files."""
